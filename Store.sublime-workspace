@@ -1,0 +1,495 @@
+{
+	"auto_complete":
+	{
+		"selected_items":
+		[
+			[
+				"pr",
+				"$product〔variable〕"
+			],
+			[
+				"sho",
+				"showOne〔function〕"
+			],
+			[
+				"cate",
+				"$category〔variable〕"
+			],
+			[
+				"sh",
+				"showOne〔function〕"
+			],
+			[
+				"excep",
+				"exception"
+			],
+			[
+				"conver",
+				"convertValidationExceptionToResponse〔function〕"
+			],
+			[
+				"error",
+				"errorResponse"
+			],
+			[
+				"comprador",
+				"$comprador〔variable〕"
+			],
+			[
+				"id",
+				"$id〔variable〕"
+			],
+			[
+				"U",
+				"USUARIO_REGULAR〔constant〕"
+			],
+			[
+				"usu",
+				"$usuarios〔variable〕"
+			],
+			[
+				"usuario",
+				"$usuario〔variable〕"
+			],
+			[
+				"canti",
+				"cantidadTransacciones"
+			],
+			[
+				"cant",
+				"$cantidadTransacciones〔variable〕"
+			],
+			[
+				"random",
+				"randomElement"
+			],
+			[
+				"fa",
+				"faker"
+			]
+		]
+	},
+	"buffers":
+	[
+		{
+			"contents": "<?php\n\nnamespace App\\Exceptions;\n\nuse Throwable;\nuse App\\Traits\\ApiResponser;\nuse Illuminate\\Database\\QueryException;\nuse Illuminate\\Database\\Eloquent\\getModel;\nuse Illuminate\\Auth\\AuthenticationException;\nuse Illuminate\\Validation\\ValidationException;\nuse Illuminate\\Auth\\Access\\AuthorizationException;\nuse Illuminate\\Database\\Eloquent\\ModelNotFoundException;\nuse Symfony\\Component\\HttpKernel\\Exception\\HttpException;\nuse Illuminate\\Foundation\\Exceptions\\Handler as ExceptionHandler;\nuse Symfony\\Component\\HttpKernel\\Exception\\NotFoundHttpException;\nuse Symfony\\Component\\HttpKernel\\Exception\\MethodNotAllowedHttpException;\n\nclass Handler extends ExceptionHandler\n{\n    use ApiResponser;\n    /**\n     * Lista de tipos de excepción que no se notifican.\n     *\n     * @var array\n     */\n    protected $dontReport = [\n        //En esta parte hay una lista de tipos de excepciones que no se notifican, preguntar si es por la versión. Revisar\n    ];\n\n    /**\n     * A list of the inputs that are never flashed for validation exceptions.\n     *\n     * @var array\n     */\n    protected $dontFlash = [\n        'password',\n        'password_confirmation',\n    ];\n\n    /**\n     * Report or log an exception.\n     *\n     * @param  \\Throwable  $exception\n     * @return void\n     *\n     * @throws \\Throwable\n     */\n    public function report(Throwable $exception)\n    {\n        parent::report($exception);\n    }\n\n    /**\n     * Representa una excepción en una respuesta HTTP. \n     *\n     * @param  \\Illuminate\\Http\\Request  $request\n     * @param  \\Throwable  $exception\n     * @return \\Symfony\\Component\\HttpFoundation\\Response\n     *\n     * @throws \\Throwable\n     */\n    public function render($request, Throwable $exception)\n    {   //Este condicional permite a postman mostrar en una respuesta json, qué atributos están obteniendo error y cuál es dicho error.\n        if($exception instanceof ValidationException) { //Algo que también se va a hacer es manejar directamente las excepciones de tipo validación exception, esto es necesario puesto que actualmente las excepciones de tipo exceptionValidation están siendo manejadas directamente por el método render, sin embargo, como verémos más adelante no podrémos depender únicamente del método render para manejar diferentes tipos de excepciones que pueden surgir en la ejecución de nuestra Api puesto que el método render tiende a mostrar gran detalle de algunas excepciones, lo cual no es adecuado especialmente si ya estamos en etapa de producción y no en etapa de desarrollo en nuestra Api\n            return $this->convertValidationExceptionToResponse($exception, $request);\n        }\n        //Este condicional permite arrojar un mensaje en json cuando el usuario que se está buscando no existe en la base de datos \n        if($exception instanceof ModelNotFoundException){\n            $modelo = strtolower(class_basename($exception->getModel()));//esta línea no funciona(importé 2 definiciones, no sé si son las correctas. Revisar)\n            return $this->errorResponse('No existe ninguna estancia de '.$modelo.' con el id especificado', 404);\n        }\n        //este condicional controla las excepciones que corresponden a los usuarios que no están autenticados en el sistema\n        if ($exception instanceof AuthenticationException) {//los objetos son instancias, \n            return $this->unauthenticated($request, $e); //unauthenticated se modificó en la definición de render. Está ubicado allá no acá.\n        }\n        //este condicional controla las excepciones relacionadas con la autorización para una respectiva acción\n        if ($exception instanceof AuthorizationException) {\n            return $this->errorResponse ('No posee permisos para ejecutar esta acción', 403); \n        }\n        //controla los errores de escritura de la url\n        if ($exception instanceof NotFoundHttpException) {\n            return $this->errorResponse ('No se encontró la URL especificada', 404); \n        }\n\n        if ($exception instanceof MethodNotAllowedHttpException) {\n            return $this->errorResponse('El método especificado en la petición no es válido', 405); \n        }\n        //existen muchísimos tipos de excepciones http que podrían surgir durante la ejecución de la Api, este condicional permite controlar de manera genérica un mensaje para este tipo de excepciones\n        if ($exception instanceof HttpException) {\n            return $this->errorResponse($exception->message(), $exception->getStatusCode());\n        }\n        //Hay algunos usuarios que no se pueden eliminar debido a que están relacionados con otros recursos, este condicional nos permite controlar este tipo de excepciones\n        if ($exception instanceof QueryException) {\n            $codigo = $exception->errorInfo[1];\n\n            if($codigo == 1451){\n                return $this->errorResponse('No se puede eliminar de forma permanente el recurso porque está relacionado con algún otro', 409);\n            }\n            \n        }\n        if(config('app.debug')){//Este condicional pregunta si la máquina esta depurada para saber si está en entorno de producción o desarrollo, con el fin de mostrar los dealles de la falla inesperada si estamos en un entorno de desarrollo\n           return parent::render($request, $exception);\n        }\n\n        //Falla interna de la Api\n        return $this->errorResponse('Falla inesperada. Intente luego', 500);\n\n    }\n\n      /**\n     * Convierte una excepción de autenticación en una respuesta. Está función de autenticación está en la definición de exceptionHandler y no en nuestro handler como lo enseñan en el curso. Revisar\n     *\n     * @param  \\Illuminate\\Http\\Request  $request\n     * @param  \\Illuminate\\Auth\\AuthenticationException  $exception\n     * @return \\Symfony\\Component\\HttpFoundation\\Response\n     \n    protected function unauthenticated($request, AuthenticationException $exception)\n    {\n        return $request->expectsJson()\n                    ? response()->json(['message' => $exception->getMessage()], 401)\n                    : redirect()->guest($exception->redirectTo() ?? route('login'));\n    }*/\n\n    /*Crea un objeto de respuesta a partir de la excepción de validación dada.\n     *\n     * @param  \\Illuminate\\Validation\\ValidationException  $e\n     * @param  \\Illuminate\\Http\\Request  $request\n     * @return \\Symfony\\Component\\HttpFoundation\\Response\n     \n    protected function convertValidationExceptionToResponse(ValidationException $e, $request)\n    {\n        if ($e->response) {\n            return $e->response;\n        }\n\n        return $request->expectsJson()\n                    ? $this->invalidJson($request, $e)\n                    : $this->invalid($request, $e);\n    }*/\n\n    protected function convertValidationExceptionToResponse(ValidationException $e, $request)\n    {\n        $errors = $e->validator->errors()->messages();\n\n        \n        return $this->errorResponse($errors, 422);\n    }\n\n}\n\n",
+			"file": "app/Exceptions/Handler.php",
+			"file_size": 6988,
+			"file_write_time": 132563209236392554,
+			"settings":
+			{
+				"buffer_size": 6933,
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"contents": "<?php\n\nnamespace App\\Http\\Controllers\\Transaction;\n\nuse App\\Transaction;\nuse Illuminate\\Http\\Request;\nuse App\\Http\\Controllers\\ApiController;\n\nclass TransactionController extends ApiController\n{\n    /**\n     * Display a listing of the resource.\n     *\n     * @return \\Illuminate\\Http\\Response\n     */\n    public function index()\n    {\n        $transactions = Transaction::all();\n\n        return $this->showAll($transactions);\n    }\n\n    \n    /**\n     * Display the specified resource.\n     *\n     * @param  \\App\\Transaction  $transaction\n     * @return \\Illuminate\\Http\\Response\n     */\n    public function show(Transaction $transaction)\n    {\n        return $this->showOne($transaction);\n    }\n\n}\n",
+			"file": "app/Http/Controllers/Transaction/TransactionController.php",
+			"file_size": 698,
+			"file_write_time": 132564027876543064,
+			"settings":
+			{
+				"buffer_size": 698,
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"contents": "<?php\n\nuse Illuminate\\Http\\Request;\nuse Illuminate\\Support\\Facades\\Route;\n\n/*\n|--------------------------------------------------------------------------\n| API Routes\n|--------------------------------------------------------------------------\n|\n| Here is where you can register API routes for your application. These\n| routes are loaded by the RouteServiceProvider within a group which\n| is assigned the \"api\" middleware group. Enjoy building your API!\n|\n*/\n\n/*Route::middleware('auth:api')->get('/user', function (Request $request) {\n    return $request->user();\n});*/\n\nRoute::resource('buyers', 'Buyer\\BuyerController', ['only' => ['index', 'show']]);\n\n\nRoute::resource('categories', 'Category\\CategoryController', ['except' => ['create', 'edit']]);\n\n\nRoute::resource('products', 'Product\\ProductController', ['only' => ['index', 'show']]);\n\n\nRoute::resource('transactions', 'Transaction\\TransactionController', ['only' => ['index', 'show']]);\nRoute::resource('transactions.categories', 'Transaction\\TransactionCategoryController', ['only' => ['index']]);\n\n\nRoute::resource('sellers', 'Seller\\SellerController', ['only' => ['index', 'show']]);\n\n\nRoute::resource('users', 'User\\UserController', ['except' => ['create', 'edit']]);\n\n\n",
+			"file": "routes/api.php",
+			"file_size": 1121,
+			"file_write_time": 132556496296813610,
+			"settings":
+			{
+				"buffer_size": 1233,
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"file": "app/Http/Controllers/Transaction/TransactionCategoryController.php",
+			"settings":
+			{
+				"buffer_size": 1096,
+				"encoding": "UTF-8",
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"file": "app/Http/Controllers/Category/CategoryController.php",
+			"settings":
+			{
+				"buffer_size": 2032,
+				"line_ending": "Unix"
+			}
+		}
+	],
+	"build_system": "",
+	"build_system_choices":
+	[
+	],
+	"build_varint": "",
+	"command_palette":
+	{
+		"height": 0.0,
+		"last_filter": "",
+		"selected_items":
+		[
+			[
+				"ins",
+				"Package Control: Install Package"
+			],
+			[
+				"inst",
+				"Package Control: Install Package"
+			],
+			[
+				"install",
+				"Install Package Control"
+			]
+		],
+		"width": 0.0
+	},
+	"console":
+	{
+		"height": 0.0,
+		"history":
+		[
+		]
+	},
+	"distraction_free":
+	{
+		"menu_visible": true,
+		"show_minimap": false,
+		"show_open_files": false,
+		"show_tabs": false,
+		"side_bar_visible": false,
+		"status_bar_visible": false
+	},
+	"expanded_folders":
+	[
+		"/C/laragon/www/store",
+		"/C/laragon/www/store/app",
+		"/C/laragon/www/store/app/Http",
+		"/C/laragon/www/store/app/Http/Controllers",
+		"/C/laragon/www/store/app/Http/Controllers/Category",
+		"/C/laragon/www/store/app/Http/Controllers/Transaction",
+		"/C/laragon/www/store/app/Scopes",
+		"/C/laragon/www/store/routes"
+	],
+	"file_history":
+	[
+		"/C/laragon/www/store/app/Http/Kernel.php",
+		"/C/laragon/www/store/vendor/laravel/framework/src/Illuminate/Foundation/Exceptions/Handler.php",
+		"/C/laragon/www/store/vendor/laravel/framework/src/Illuminate/Validation/ValidationException.php",
+		"/C/laragon/www/store/app/Http/Controllers/User/UserController.php",
+		"/C/laragon/www/store/app/Http/Controllers/Product/ProductController.php",
+		"/C/laragon/www/store/app/Product.php",
+		"/C/laragon/www/store/app/Http/Controllers/Transaction/TransactionController.php",
+		"/C/laragon/www/store/app/Http/Controllers/Category/CategoryController.php",
+		"/C/laragon/www/store/app/Seller.php",
+		"/C/laragon/www/store/app/Http/Controllers/Seller/SellerController.php",
+		"/C/laragon/www/store/app/Scopes/SellerScope.php",
+		"/C/laragon/www/store/app/Buyer.php",
+		"/C/laragon/www/store/app/Traits/ApiResponser.php",
+		"/C/laragon/www/store/app/Http/Controllers/Buyer/BuyerController.php",
+		"/C/laragon/www/store/app/Scopes/BuyerScope.php",
+		"/C/laragon/www/store/vendor/symfony/http-kernel/Exception/NotFoundHttpException.php",
+		"/C/laragon/www/store/app/User.php",
+		"/C/laragon/www/store/app/Category.php",
+		"/C/laragon/www/store/database/migrations/2021_01_20_191735_create_categories_table.php",
+		"/C/laragon/www/store/database/migrations/2021_01_20_191614_create_products_table.php",
+		"/C/laragon/www/store/database/migrations/2021_01_20_191714_create_transactions_table.php",
+		"/C/laragon/www/store/database/migrations/2014_10_12_000000_create_users_table.php",
+		"/C/laragon/www/store/vendor/laravel/framework/src/Illuminate/Database/Eloquent/ModelNotFoundException.php",
+		"/C/laragon/www/store/app/Scopes/BuyerScope",
+		"/C/laragon/www/store/.env",
+		"/C/laragon/www/store/database/seeds/DatabaseSeeder.php",
+		"/C/laragon/www/store/database/factories/UserFactory.php",
+		"/C/laragon/www/store/app/Http/Controllers/ApiController.php",
+		"/C/laragon/www/store/routes/api.php",
+		"/C/laragon/www/store/app/ApiResponser.php",
+		"/C/laragon/www/store/database/migrations/2021_01_24_235714_category_product_table.php",
+		"/C/laragon/www/store/app/Providers/AppServiceProvider.php",
+		"/C/laragon/www/store/app/Transaction.php",
+		"/C/laragon/www/store/app/Providers/RouteServiceProvider.php",
+		"/C/Users/zaluf/Downloads/Sublime Text Build 3211 x64/Data/Packages/PHP Companion/PHP Companion.sublime-settings",
+		"/C/Users/zaluf/Downloads/Sublime Text Build 3211 x64/Data/Packages/User/PHP Companion.sublime-settings"
+	],
+	"find":
+	{
+		"height": 0.0
+	},
+	"find_in_files":
+	{
+		"height": 0.0,
+		"where_history":
+		[
+		]
+	},
+	"find_state":
+	{
+		"case_sensitive": false,
+		"find_history":
+		[
+		],
+		"highlight": true,
+		"in_selection": false,
+		"preserve_case": false,
+		"regex": false,
+		"replace_history":
+		[
+		],
+		"reverse": false,
+		"show_context": true,
+		"use_buffer2": true,
+		"whole_word": false,
+		"wrap": true
+	},
+	"groups":
+	[
+		{
+			"selected": 3,
+			"sheets":
+			[
+				{
+					"buffer": 0,
+					"file": "app/Exceptions/Handler.php",
+					"semi_transient": false,
+					"settings":
+					{
+						"buffer_size": 6933,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								3059,
+								3059
+							]
+						],
+						"settings":
+						{
+							"auto_complete": false,
+							"syntax": "Packages/PHP/PHP.sublime-syntax",
+							"tab_size": 4,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0.0,
+						"translation.y": 1130.0,
+						"zoom_level": 1.0
+					},
+					"stack_index": 4,
+					"type": "text"
+				},
+				{
+					"buffer": 1,
+					"file": "app/Http/Controllers/Transaction/TransactionController.php",
+					"semi_transient": false,
+					"settings":
+					{
+						"buffer_size": 698,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								688,
+								688
+							]
+						],
+						"settings":
+						{
+							"auto_complete": false,
+							"syntax": "Packages/PHP/PHP.sublime-syntax",
+							"tab_size": 4,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0.0,
+						"translation.y": 0.0,
+						"zoom_level": 1.0
+					},
+					"stack_index": 3,
+					"type": "text"
+				},
+				{
+					"buffer": 2,
+					"file": "routes/api.php",
+					"semi_transient": false,
+					"settings":
+					{
+						"buffer_size": 1233,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								945,
+								945
+							]
+						],
+						"settings":
+						{
+							"auto_complete": false,
+							"syntax": "Packages/PHP/PHP.sublime-syntax"
+						},
+						"translation.x": 0.0,
+						"translation.y": 212.0,
+						"zoom_level": 1.0
+					},
+					"stack_index": 2,
+					"type": "text"
+				},
+				{
+					"buffer": 3,
+					"file": "app/Http/Controllers/Transaction/TransactionCategoryController.php",
+					"semi_transient": false,
+					"settings":
+					{
+						"buffer_size": 1096,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								195,
+								195
+							]
+						],
+						"settings":
+						{
+							"auto_complete": false,
+							"syntax": "Packages/PHP/PHP.sublime-syntax",
+							"tab_size": 4,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0.0,
+						"translation.y": 0.0,
+						"zoom_level": 1.0
+					},
+					"stack_index": 0,
+					"type": "text"
+				},
+				{
+					"buffer": 4,
+					"file": "app/Http/Controllers/Category/CategoryController.php",
+					"semi_transient": false,
+					"settings":
+					{
+						"buffer_size": 2032,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								1127,
+								1094
+							]
+						],
+						"settings":
+						{
+							"auto_complete": false,
+							"syntax": "Packages/PHP/PHP.sublime-syntax",
+							"tab_size": 4,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0.0,
+						"translation.y": 437.0,
+						"zoom_level": 1.0
+					},
+					"stack_index": 1,
+					"type": "text"
+				}
+			]
+		}
+	],
+	"incremental_find":
+	{
+		"height": 0.0
+	},
+	"input":
+	{
+		"height": 68.8
+	},
+	"layout":
+	{
+		"cells":
+		[
+			[
+				0,
+				0,
+				1,
+				1
+			]
+		],
+		"cols":
+		[
+			0.0,
+			1.0
+		],
+		"rows":
+		[
+			0.0,
+			1.0
+		]
+	},
+	"menu_visible": true,
+	"output.SublimeLinter":
+	{
+		"height": 0.0
+	},
+	"output.find_results":
+	{
+		"height": 0.0
+	},
+	"pinned_build_system": "",
+	"project": "Store.sublime-project",
+	"replace":
+	{
+		"height": 0.0
+	},
+	"save_all_on_build": true,
+	"select_file":
+	{
+		"height": 0.0,
+		"last_filter": "",
+		"selected_items":
+		[
+		],
+		"width": 0.0
+	},
+	"select_project":
+	{
+		"height": 0.0,
+		"last_filter": "",
+		"selected_items":
+		[
+		],
+		"width": 0.0
+	},
+	"select_symbol":
+	{
+		"height": 0.0,
+		"last_filter": "",
+		"selected_items":
+		[
+		],
+		"width": 0.0
+	},
+	"selected_group": 0,
+	"settings":
+	{
+	},
+	"show_minimap": true,
+	"show_open_files": false,
+	"show_tabs": true,
+	"side_bar_visible": true,
+	"side_bar_width": 342.0,
+	"status_bar_visible": true,
+	"template_settings":
+	{
+	}
+}
