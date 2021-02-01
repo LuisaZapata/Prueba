@@ -114,6 +114,7 @@ class SellerProductController extends ApiController
 
     protected function verificarVendedor(Seller $seller, Product $product)
     {
+        $mpm = null;
         if($seller->id != $product->seller_id) {
             throw new HttpException(422, 'El vendedor especificado no es el vendedor real del producto');
         }
